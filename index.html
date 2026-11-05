@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Site Notes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#f2c200">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" id="touch" href="">
+<title>Site Notes</title>
+<style>
+:root{--bg:#eef0f2;--card:#fff;--ink:#1d2733;--mute:#66717d;--line:#d3d8dd;--hi:#f2c200;--hiink:#1d2733;--danger:#b3261e;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#12171c;--card:#1c2329;--ink:#eef1f4;--mute:#9aa5b0;--line:#303a43;--danger:#ff8a80;color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 -apple-system,system-ui,"Helvetica Neue",sans-serif;-webkit-text-size-adjust:100%}
+body{padding:env(safe-area-inset-top) 0 calc(env(safe-area-inset-bottom) + 24px)}
+[v-cloak]{display:none}
+main{max-width:640px;margin:0 auto;padding:12px}
+h1{font-size:22px;margin:8px 4px 12px}
+h2{font-size:17px;margin:20px 4px 8px}
+section,.item{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px}
+label{display:block;font-size:14px;color:var(--mute);margin:10px 0 4px}
+label:first-child{margin-top:0}
+input,textarea{width:100%;font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px}
+input:focus,textarea:focus,button:focus-visible{outline:2px solid var(--hi);outline-offset:1px}
+textarea{min-height:96px;resize:vertical}
+.title{font-weight:600}
+button,.btn{font:inherit;font-size:16px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:10px 14px;min-height:44px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+button.primary{background:var(--hi);color:var(--hiink);border-color:var(--hi);font-weight:600}
+button.danger{color:var(--danger)}
+button:disabled{opacity:.5}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.row.end{justify-content:flex-end}
+.grow{flex:1}
+.head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.num{font-weight:700;min-width:28px;height:28px;border-radius:6px;background:var(--hi);color:var(--hiink);display:flex;align-items:center;justify-content:center;font-size:14px}
+.photo{margin-top:10px}
+.photo img{width:100%;max-height:360px;object-fit:contain;border-radius:8px;background:var(--bg);display:block;margin-bottom:8px}
+.empty{color:var(--mute);text-align:center;padding:20px 8px}
+.note{font-size:14px;color:var(--mute);margin:8px 0 0}
+.note code{background:var(--bg);padding:1px 4px;border-radius:4px}
+.toast{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom) + 12px);background:var(--ink);color:var(--bg);padding:12px 14px;border-radius:10px;text-align:center;z-index:5}
+input[type=file]{display:none}
+</style>
+</head>
+<body>
+<div id="app" v-cloak>
+<main>
+  <h1>Site inspection</h1>
+
+  <section>
+    <label>Project number</label>
+    <input v-model="s.number" inputmode="text" autocomplete="off" placeholder="e.g. 24-0187">
+    <label>Project name</label>
+    <input v-model="s.name" autocomplete="off" placeholder="e.g. Harbour Road extension">
+    <label>Date</label>
+    <input type="date" v-model="s.date">
+    <label>Attended by</label>
+    <textarea v-model="s.attendees" placeholder="One name per line"></textarea>
+  </section>
+
+  <h2>Content</h2>
+  <p class="empty" v-if="!s.items.length">No items yet. Add the first note below.</p>
+
+  <div class="item" v-for="(it,i) in s.items" :key="it.id">
+    <div class="head">
+      <div class="num">{{ i+1 }}</div>
+      <input class="title grow" v-model="it.title" placeholder="Title">
+    </div>
+    <textarea v-model="it.body" placeholder="Notes"></textarea>
+    <div class="photo">
+      <img v-if="it.photo" :src="it.photo.data" alt="Site photo">
+      <div class="row">
+        <label class="btn" style="margin:0;color:var(--ink)">
+          {{ it.photo ? 'Replace photo' : 'Add photo' }}
+          <input type="file" accept="image/*" @change="addPhoto(it,$event)">
+        </label>
+        <button v-if="it.photo" @click="it.photo=null">Remove photo</button>
+      </div>
+    </div>
+    <div class="row end" style="margin-top:10px">
+      <button :disabled="i===0" @click="move(i,-1)" aria-label="Move up">▲ Up</button>
+      <button :disabled="i===s.items.length-1" @click="move(i,1)" aria-label="Move down">▼ Down</button>
+      <button class="danger" @click="del(i)">Delete</button>
+    </div>
+  </div>
+
+  <button class="primary" style="width:100%" @click="add">Add item</button>
+
+  <h2>Report</h2>
+  <section>
+    <button class="primary" style="width:100%" :disabled="busy" @click="exportDocx">{{ busy ? 'Building…' : 'Export Word document' }}</button>
+    <p class="note">Opens the share sheet. Choose Save to Files and pick the project folder.</p>
+  </section>
+
+  <section>
+    <div class="row">
+      <button class="danger" @click="newReport">New report</button>
+    </div>
+  </section>
+</main>
+<div class="toast" v-if="msg">{{ msg }}</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.21/vue.global.prod.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+const db=new Promise(r=>{const q=indexedDB.open('sitenotes',1);q.onupgradeneeded=()=>q.result.createObjectStore('kv');q.onsuccess=()=>r(q.result)});
+const kv={
+  get:k=>db.then(d=>new Promise(r=>{const q=d.transaction('kv').objectStore('kv').get(k);q.onsuccess=()=>r(q.result)})),
+  set:(k,v)=>db.then(d=>new Promise(r=>{const t=d.transaction('kv','readwrite');t.objectStore('kv').put(v,k);t.oncomplete=r})),
+  del:k=>db.then(d=>new Promise(r=>{const t=d.transaction('kv','readwrite');t.objectStore('kv').delete(k);t.oncomplete=r}))
+};
+const esc=t=>String(t??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const para=(t,rpr='')=>`<w:p><w:r>${rpr}<w:t xml:space="preserve">${esc(t)}</w:t></w:r></w:p>`;
+
+// Word often splits typed text across runs; rejoin any paragraph that contains a placeholder.
+function joinRuns(xml){
+  return xml.replace(/<w:p[ >][\s\S]*?<\/w:p>/g,p=>{
+    const ts=[...p.matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g)].map(m=>m[1]).join('');
+    if(!ts.includes('{{'))return p;
+    let first=true;
+    return p.replace(/<w:t(?:\s[^>]*)?>[^<]*<\/w:t>/g,()=>first?(first=false,`<w:t xml:space="preserve">${ts}</w:t>`):'<w:t></w:t>');
+  });
+}
+
+async function buildDocx(s,tpl){
+  const z=await JSZip.loadAsync(tpl);
+  const hasH2=/w:styleId="Heading2"/.test(await (z.file('word/styles.xml')?.async('string'))||'');
+  const vals={PROJECT_NUMBER:s.number,PROJECT_NAME:s.name,DATE:new Date(s.date||Date.now()).toLocaleDateString('en-GB'),ATTENDEES:s.attendees.split('\n').map(x=>x.trim()).filter(Boolean).join(', ')};
+  const fill=x=>Object.entries(vals).reduce((a,[k,v])=>a.split(`{{${k}}}`).join(esc(v)),x);
+
+  let rels=await (z.file('word/_rels/document.xml.rels')?.async('string'))||'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
+  let ct=await z.file('[Content_Types].xml').async('string');
+  let body='',n=0,relAdd='';
+  s.items.forEach((it,i)=>{
+    const title=`${i+1}. ${it.title||'Untitled'}`;
+    body+=hasH2?`<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t xml:space="preserve">${esc(title)}</w:t></w:r></w:p>`
+      :`<w:p><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="60"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="26"/></w:rPr><w:t xml:space="preserve">${esc(title)}</w:t></w:r></w:p>`;
+    (it.body||'').split('\n').forEach(l=>{if(l.trim())body+=para(l)});
+    if(it.photo){
+      n++;
+      const {data,w,h}=it.photo;
+      z.file(`word/media/site${n}.jpg`,data.split(',')[1],{base64:true});
+      relAdd+=`<Relationship Id="rIdSite${n}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/site${n}.jpg"/>`;
+      let cx=5400000,cy=Math.round(cx*h/w);
+      if(cy>4320000){cy=4320000;cx=Math.round(cy*w/h)}
+      body+=`<w:p><w:pPr><w:spacing w:before="80" w:after="120"/></w:pPr><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${900+n}" name="Site photo ${n}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="${900+n}" name="site${n}.jpg"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="rIdSite${n}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`;
+    }
+  });
+  let doc=fill(joinRuns(await z.file('word/document.xml').async('string')));
+  doc=doc.replace(/<w:p[ >][\s\S]*?<\/w:p>/g,p=>p.includes('{{CONTENT}}')?body:p);
+  z.file('word/document.xml',doc);
+  for(const name of Object.keys(z.files).filter(f=>/^word\/(header|footer)\d*\.xml$/.test(f)))
+    z.file(name,fill(joinRuns(await z.file(name).async('string'))));
+  if(relAdd)z.file('word/_rels/document.xml.rels',rels.replace('</Relationships>',relAdd+'</Relationships>'));
+  if(n&&!/Extension="jpg"/i.test(ct))z.file('[Content_Types].xml',ct.replace('</Types>','<Default Extension="jpg" ContentType="image/jpeg"/></Types>'));
+  return z.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+}
+
+async function shrink(file){
+  const url=URL.createObjectURL(file),img=new Image();
+  img.src=url;await img.decode();
+  const k=Math.min(1,1600/Math.max(img.width,img.height)),c=document.createElement('canvas');
+  c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);
+  c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+  URL.revokeObjectURL(url);
+  return{data:c.toDataURL('image/jpeg',.72),w:c.width,h:c.height};
+}
+
+async function saveFile(blob,name){
+  const f=new File([blob],name,{type:blob.type});
+  if(navigator.canShare&&navigator.canShare({files:[f]})){
+    try{await navigator.share({files:[f]});return}catch(e){if(e.name==='AbortError')return}
+  }
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+}
+
+Vue.createApp({setup(){
+  const {reactive,ref,watch,onMounted}=Vue;
+  const s=reactive({number:'',name:'',attendees:'',date:new Date().toISOString().slice(0,10),items:[]});
+  const ready=ref(false),busy=ref(false),msg=ref('');
+  let timer,tt;
+  const toast=t=>{msg.value=t;clearTimeout(tt);tt=setTimeout(()=>msg.value='',3000)};
+  onMounted(async()=>{
+    const d=await kv.get('report');if(d)Object.assign(s,d);
+    ready.value=true;
+    if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+    const c=document.createElement('canvas');c.width=c.height=180;const x=c.getContext('2d');
+    x.fillStyle='#f2c200';x.fillRect(0,0,180,180);x.fillStyle='#1d2733';x.fillRect(48,38,84,104);
+    x.fillStyle='#f2c200';for(const y of[62,86,110])x.fillRect(60,y,60,8);
+    document.getElementById('touch').href=c.toDataURL('image/png');
+  });
+  watch(s,()=>{if(!ready.value)return;clearTimeout(timer);timer=setTimeout(()=>kv.set('report',JSON.parse(JSON.stringify(s))),400)},{deep:true});
+  const add=()=>s.items.push({id:Date.now()+Math.random(),title:'',body:'',photo:null});
+  const move=(i,d)=>{const [x]=s.items.splice(i,1);s.items.splice(i+d,0,x)};
+  const del=i=>{if(confirm('Delete this item?'))s.items.splice(i,1)};
+  const addPhoto=async(it,e)=>{const f=e.target.files[0];e.target.value='';if(f){try{it.photo=await shrink(f)}catch{toast('Could not read that photo')}}};
+  const exportDocx=async()=>{
+    busy.value=true;
+    try{
+      const r=await fetch('template.docx',{cache:'no-store'});
+      if(!r.ok)throw new Error('template.docx not found next to index.html');
+      const tpl=await r.arrayBuffer();
+      const blob=await buildDocx(s,tpl);
+      const name=`${s.number||'Project'} ${s.name||''} site inspection`.trim().replace(/[\\/:*?"<>|]+/g,'-')+'.docx';
+      await saveFile(blob,name);
+    }catch(e){toast('Export failed: '+(e.message||e))}
+    busy.value=false;
+  };
+  const clearCache=async()=>{
+    if(!confirm('Clear the app cache and reload? Your notes are kept.'))return;
+    try{
+      if(window.caches)for(const k of await caches.keys())await caches.delete(k);
+      if(navigator.serviceWorker)for(const r of await navigator.serviceWorker.getRegistrations())await r.unregister();
+    }catch{}
+    location.reload();
+  };
+  const newReport=()=>{if(confirm('Start a new report? The current notes and photos will be cleared.')){Object.assign(s,{number:'',name:'',attendees:'',date:new Date().toISOString().slice(0,10),items:[]})}};
+  return{s,busy,msg,add,move,del,addPhoto,exportDocx,clearCache,newReport};
+}}).mount('#app');
+</script>
+</body>
+</html>
