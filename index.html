@@ -7,12 +7,12 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Site Notes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="theme-color" content="#f2c200">
+<meta name="theme-color" content="#e64833">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" id="touch" href="">
-<title>Site Notes</title>
+<title>Site Inspection Notes</title>
 <style>
-:root{--bg:#eef0f2;--card:#fff;--ink:#1d2733;--mute:#66717d;--line:#d3d8dd;--hi:#f2c200;--hiink:#1d2733;--danger:#b3261e;color-scheme:light}
+:root{--bg:#eef0f2;--card:#fff;--ink:#244855;--mute:#66717d;--line:#d3d8dd;--hi:#D62631;--hiink:#fff;--danger:#b3261e;color-scheme:light}
 @media (prefers-color-scheme:dark){:root{--bg:#12171c;--card:#1c2329;--ink:#eef1f4;--mute:#9aa5b0;--line:#303a43;--danger:#ff8a80;color-scheme:dark}}
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 -apple-system,system-ui,"Helvetica Neue",sans-serif;-webkit-text-size-adjust:100%}
@@ -43,26 +43,29 @@ button:disabled{opacity:.5}
 .note{font-size:14px;color:var(--mute);margin:8px 0 0}
 .note code{background:var(--bg);padding:1px 4px;border-radius:4px}
 .toast{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom) + 12px);background:var(--ink);color:var(--bg);padding:12px 14px;border-radius:10px;text-align:center;z-index:5}
+#editor{position:fixed;inset:0;z-index:20;background:#000;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
+#editor[hidden]{display:none}
 input[type=file]{display:none}
 </style>
 </head>
 <body>
 <div id="app" v-cloak>
 <main>
+  <img src="logo.png" align=""right" style="float:right;margin:0 0 12px 12px" height="80px" width="auto">
   <h1>Site inspection</h1>
-
+    <h2>Project details</h2>
   <section>
     <label>Project number</label>
-    <input v-model="s.number" inputmode="text" autocomplete="off" placeholder="e.g. 24-0187">
+    <input v-model="s.number" inputmode="text" autocomplete="off" placeholder="e.g. 6620">
     <label>Project name</label>
-    <input v-model="s.name" autocomplete="off" placeholder="e.g. Harbour Road extension">
+    <input v-model="s.name" autocomplete="off" placeholder="e.g. Anfield">
     <label>Date</label>
     <input type="date" v-model="s.date">
     <label>Attended by</label>
-    <textarea v-model="s.attendees" placeholder="One name per line"></textarea>
+    <textarea v-model="s.attendees" placeholder="Don't forget qualifications"></textarea>
   </section>
 
-  <h2>Content</h2>
+  <h2>Observations</h2>
   <p class="empty" v-if="!s.items.length">No items yet. Add the first note below.</p>
 
   <div class="item" v-for="(it,i) in s.items" :key="it.id">
@@ -78,6 +81,7 @@ input[type=file]{display:none}
           {{ it.photo ? 'Replace photo' : 'Add photo' }}
           <input type="file" accept="image/*" @change="addPhoto(it,$event)">
         </label>
+        <button v-if="it.photo" @click="editPhoto(it)">Draw on photo</button>
         <button v-if="it.photo" @click="it.photo=null">Remove photo</button>
       </div>
     </div>
@@ -90,23 +94,26 @@ input[type=file]{display:none}
 
   <button class="primary" style="width:100%" @click="add">Add item</button>
 
-  <h2>Report</h2>
+  <h2>Export Report</h2>
   <section>
     <button class="primary" style="width:100%" :disabled="busy" @click="exportDocx">{{ busy ? 'Building…' : 'Export Word document' }}</button>
     <p class="note">Opens the share sheet. Choose Save to Files and pick the project folder.</p>
   </section>
-
+<h2>Clear report</h2>
   <section>
+    <p>Danger - only click this if you've exported your report and want to clear everything to start a new one!</p>
     <div class="row">
       <button class="danger" @click="newReport">New report</button>
     </div>
   </section>
 </main>
+<div id="editor" hidden></div>
 <div class="toast" v-if="msg">{{ msg }}</div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.21/vue.global.prod.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="filerobot-image-editor.min.js"></script>
 <script>
 const db=new Promise(r=>{const q=indexedDB.open('sitenotes',1);q.onupgradeneeded=()=>q.result.createObjectStore('kv');q.onsuccess=()=>r(q.result)});
 const kv={
@@ -117,13 +124,43 @@ const kv={
 const esc=t=>String(t??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const para=(t,rpr='')=>`<w:p><w:r>${rpr}<w:t xml:space="preserve">${esc(t)}</w:t></w:r></w:p>`;
 
-// Word often splits typed text across runs; rejoin any paragraph that contains a placeholder.
-function joinRuns(xml){
+// Fill {{PLACEHOLDERS}} without disturbing anything else in the paragraph.
+// Word often splits typed text across runs, so placeholders are located in the paragraph's
+// combined text, but only the runs they touch are edited. Tabs and line breaks stay where they are
+// (and a placeholder can never span one). If body is given, {{CONTENT}} is replaced by it.
+const TOK=/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>|<w:tab\/>|<w:br\b[^>]*\/>/g;
+function fillXml(xml,vals,body){
   return xml.replace(/<w:p[ >][\s\S]*?<\/w:p>/g,p=>{
-    const ts=[...p.matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g)].map(m=>m[1]).join('');
-    if(!ts.includes('{{'))return p;
-    let first=true;
-    return p.replace(/<w:t(?:\s[^>]*)?>[^<]*<\/w:t>/g,()=>first?(first=false,`<w:t xml:space="preserve">${ts}</w:t>`):'<w:t></w:t>');
+    if(!p.includes('{'))return p;
+    const items=[];let full='';
+    for(const m of p.matchAll(TOK)){
+      if(m[1]!==undefined){items.push({from:full.length,to:full.length+m[1].length});full+=m[1]}
+      else full+='\u0001';
+    }
+    if(!full.includes('{{'))return p;
+    let hasContent=false,changed=false;
+    const cu=full.split('');
+    for(const m of full.matchAll(/\{\{([A-Z_]+)\}\}/g)){
+      const k=m[1];let rep;
+      if(k==='CONTENT'&&body!==undefined){rep='';hasContent=true}
+      else if(k in vals)rep=esc(vals[k]);
+      else continue;
+      cu[m.index]=rep;changed=true;
+      for(let i=m.index+1;i<m.index+m[0].length;i++)cu[i]='';
+    }
+    if(!changed)return p;
+    let n=0;
+    // rebuild: each run keeps its own text, with edits applied
+    let out=p.replace(TOK,(all,t)=>{
+      if(t===undefined)return all;
+      const it=items[n++];
+      return `<w:t xml:space="preserve">${cu.slice(it.from,it.to).join('')}</w:t>`;
+    });
+    if(!hasContent)return out;
+    // is anything left in the placeholder's paragraph worth keeping?
+    const rest=cu.join('').replace(/\u0001|\s/g,'');
+    const keep=rest||/<w:tab\/>|<w:drawing|<w:sectPr|<w:fldChar|<w:fldSimple|<w:object/.test(p);
+    return keep?out+body:body;
   });
 }
 
@@ -131,7 +168,7 @@ async function buildDocx(s,tpl){
   const z=await JSZip.loadAsync(tpl);
   const hasH2=/w:styleId="Heading2"/.test(await (z.file('word/styles.xml')?.async('string'))||'');
   const vals={PROJECT_NUMBER:s.number,PROJECT_NAME:s.name,DATE:new Date(s.date||Date.now()).toLocaleDateString('en-GB'),ATTENDEES:s.attendees.split('\n').map(x=>x.trim()).filter(Boolean).join(', ')};
-  const fill=x=>Object.entries(vals).reduce((a,[k,v])=>a.split(`{{${k}}}`).join(esc(v)),x);
+  const fill=x=>fillXml(x,vals);
 
   let rels=await (z.file('word/_rels/document.xml.rels')?.async('string'))||'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
   let ct=await z.file('[Content_Types].xml').async('string');
@@ -151,11 +188,10 @@ async function buildDocx(s,tpl){
       body+=`<w:p><w:pPr><w:spacing w:before="80" w:after="120"/></w:pPr><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${900+n}" name="Site photo ${n}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="${900+n}" name="site${n}.jpg"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="rIdSite${n}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`;
     }
   });
-  let doc=fill(joinRuns(await z.file('word/document.xml').async('string')));
-  doc=doc.replace(/<w:p[ >][\s\S]*?<\/w:p>/g,p=>p.includes('{{CONTENT}}')?body:p);
+  const doc=fillXml(await z.file('word/document.xml').async('string'),vals,body);
   z.file('word/document.xml',doc);
   for(const name of Object.keys(z.files).filter(f=>/^word\/(header|footer)\d*\.xml$/.test(f)))
-    z.file(name,fill(joinRuns(await z.file(name).async('string'))));
+    z.file(name,fill(await z.file(name).async('string')));
   if(relAdd)z.file('word/_rels/document.xml.rels',rels.replace('</Relationships>',relAdd+'</Relationships>'));
   if(n&&!/Extension="jpg"/i.test(ct))z.file('[Content_Types].xml',ct.replace('</Types>','<Default Extension="jpg" ContentType="image/jpeg"/></Types>'));
   return z.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
@@ -180,6 +216,30 @@ async function saveFile(blob,name){
   setTimeout(()=>URL.revokeObjectURL(a.href),4000);
 }
 
+let fie=null;
+function openEditor(src,done){
+  const host=document.getElementById('editor');
+  const {TABS,TOOLS}=FilerobotImageEditor;
+  const close=()=>{if(fie){try{fie.terminate()}catch{}fie=null}host.hidden=true};
+  host.hidden=false;
+  fie=new FilerobotImageEditor(host,{
+    source:src,
+    tabsIds:[TABS.ANNOTATE],
+    defaultTabId:TABS.ANNOTATE,
+    defaultToolId:TOOLS.PEN,
+    Annotate:{tools:[TOOLS.PEN,TOOLS.LINE,TOOLS.ARROW,TOOLS.RECT,TOOLS.ELLIPSE,TOOLS.POLYGON]},
+    annotationsCommon:{fill:'transparent',stroke:'#e53935',strokeWidth:4},
+    Pen:{strokeWidth:5,lineCap:'round'},
+    defaultSavedImageType:'jpeg',
+    defaultSavedImageQuality:1.0,
+    savingPixelRatio:3,
+    closeAfterSave:false,
+    onSave:o=>{done({data:o.imageBase64,w:o.width,h:o.height});close()},
+    onClose:close
+  });
+  fie.render();
+}
+
 Vue.createApp({setup(){
   const {reactive,ref,watch,onMounted}=Vue;
   const s=reactive({number:'',name:'',attendees:'',date:new Date().toISOString().slice(0,10),items:[]});
@@ -200,6 +260,7 @@ Vue.createApp({setup(){
   const move=(i,d)=>{const [x]=s.items.splice(i,1);s.items.splice(i+d,0,x)};
   const del=i=>{if(confirm('Delete this item?'))s.items.splice(i,1)};
   const addPhoto=async(it,e)=>{const f=e.target.files[0];e.target.value='';if(f){try{it.photo=await shrink(f)}catch{toast('Could not read that photo')}}};
+  const editPhoto=it=>{if(it.photo)openEditor(it.photo.data,p=>{it.photo=p})};
   const exportDocx=async()=>{
     busy.value=true;
     try{
@@ -212,16 +273,8 @@ Vue.createApp({setup(){
     }catch(e){toast('Export failed: '+(e.message||e))}
     busy.value=false;
   };
-  const clearCache=async()=>{
-    if(!confirm('Clear the app cache and reload? Your notes are kept.'))return;
-    try{
-      if(window.caches)for(const k of await caches.keys())await caches.delete(k);
-      if(navigator.serviceWorker)for(const r of await navigator.serviceWorker.getRegistrations())await r.unregister();
-    }catch{}
-    location.reload();
-  };
   const newReport=()=>{if(confirm('Start a new report? The current notes and photos will be cleared.')){Object.assign(s,{number:'',name:'',attendees:'',date:new Date().toISOString().slice(0,10),items:[]})}};
-  return{s,busy,msg,add,move,del,addPhoto,exportDocx,clearCache,newReport};
+  return{s,busy,msg,add,move,del,addPhoto,editPhoto,exportDocx,newReport};
 }}).mount('#app');
 </script>
 </body>
